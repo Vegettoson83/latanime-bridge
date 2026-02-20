@@ -3,23 +3,20 @@ const { chromium } = require("playwright");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const API_KEY = process.env.API_KEY || "";
 
 const cache = new Map();
-const CACHE_TTL = 4 * 60 * 1000;
+const CACHE_TTL = 5 * 60 * 1000;
 
-app.get("/health", (req, res) => res.json({ status: "ok", version: "1.1" }));
+app.get("/health", (req, res) => res.json({ status: "ok" }));
+app.get("/ping", (req, res) => res.send("OK"));
 
 app.get("/extract", async (req, res) => {
   const { url } = req.query;
-  const key = req.headers["x-api-key"] || req.query.key || "";
-
-  if (API_KEY && key !== API_KEY) return res.status(401).json({ error: "Unauthorized" });
   if (!url) return res.status(400).json({ error: "Missing url param" });
 
   const cached = cache.get(url);
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
-    console.log(`[cache hit] ${url}`);
+    console.log(`[cache] ${url}`);
     return res.json({ url: cached.url, cached: true });
   }
 
@@ -28,83 +25,83 @@ app.get("/extract", async (req, res) => {
   try {
     browser = await chromium.launch({
       headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--no-zygote"],
+      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
+             "--disable-gpu", "--no-zygote", "--disable-web-security"],
     });
 
     const context = await browser.newContext({
       userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      extraHTTPHeaders: { "Accept-Language": "es-ES,es;q=0.9" },
     });
 
     const page = await context.newPage();
     let streamUrl = null;
 
-    // Intercept ALL network requests
-    page.on("request", (request) => {
-      if (streamUrl) return;
-      const u = request.url();
-      if (u.includes(".m3u8") || (u.includes(".mp4") && u.includes("http") && !u.includes("analytics"))) {
-        console.log(`[req intercepted] ${u.slice(0, 100)}`);
-        streamUrl = u;
+    // Use page.route to intercept ALL requests — most reliable method
+    await page.route("**/*", (route) => {
+      const u = route.request().url();
+      if (!streamUrl) {
+        if (u.includes(".m3u8") || u.match(/\.(mp4|mkv)(\?|$)/)) {
+          console.log(`[route intercept] ${u.slice(0, 120)}`);
+          streamUrl = u;
+        }
       }
+      route.continue();
     });
 
+    // Also listen to responses for content-type based detection
     page.on("response", async (response) => {
       if (streamUrl) return;
-      const u = response.url();
-      const ct = response.headers()["content-type"] || "";
-      if (ct.includes("mpegurl") || ct.includes("x-m3u8") || u.includes(".m3u8")) {
-        console.log(`[resp m3u8] ${u.slice(0, 100)}`);
-        streamUrl = u;
-      }
+      try {
+        const ct = response.headers()["content-type"] || "";
+        const u = response.url();
+        if (ct.includes("mpegurl") || ct.includes("x-m3u8")) {
+          console.log(`[response content-type m3u8] ${u.slice(0, 120)}`);
+          streamUrl = u;
+        }
+      } catch {}
     });
 
-    // Navigate
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 25000 });
-
-    // Try clicking play button if present
+    // Navigate to the embed URL
     try {
-      await page.waitForTimeout(2000);
-      const playBtn = await page.$('button[class*="play"], .play-button, [id*="play"], video');
-      if (playBtn) {
-        await playBtn.click();
-        console.log("[clicked play button]");
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
+    } catch (e) {
+      console.log(`[nav warning] ${e.message}`);
+    }
+
+    // Try clicking any play button
+    try {
+      await page.waitForTimeout(1500);
+      for (const sel of ['[class*="play"]', 'button', '.vjs-play-control', '#play-btn', 'video']) {
+        const el = await page.$(sel);
+        if (el) { await el.click().catch(() => {}); break; }
       }
     } catch {}
 
-    // Wait up to 20 seconds for stream URL
-    const deadline = Date.now() + 20000;
+    // Poll for stream URL for up to 18 seconds
+    const deadline = Date.now() + 18000;
     while (!streamUrl && Date.now() < deadline) {
-      await page.waitForTimeout(500);
+      await page.waitForTimeout(400);
 
-      // Check page JS context for known patterns
+      // Scan inline scripts for m3u8
       if (!streamUrl) {
         try {
           const found = await page.evaluate(() => {
-            // VOE stores in window.voe or similar
-            const src = (window as any)?.voe?.hls
-              || (window as any)?.hls_url
-              || (window as any)?.stream_url;
-            if (src) return src;
-
-            // Check all script content for m3u8
-            const scripts = document.querySelectorAll("script:not([src])");
-            for (const s of scripts) {
-              const m = s.textContent?.match(/["'](https?:\/\/[^"'\s]+\.m3u8[^"'\s]*)/);
-              if (m) return m[1];
+            // Check video element
+            const v = document.querySelector("video");
+            if (v?.src?.includes(".m3u8") || v?.currentSrc?.includes(".m3u8")) {
+              return v.src || v.currentSrc;
             }
+            const src = document.querySelector("source[src*='.m3u8']");
+            if (src) return (src as HTMLSourceElement).src;
 
-            // Check video element src
-            const video = document.querySelector("video source, video");
-            if (video) {
-              return (video as HTMLSourceElement).src || (video as HTMLVideoElement).currentSrc || null;
+            // Scan script tags
+            for (const s of document.querySelectorAll("script:not([src])")) {
+              const m = s.textContent?.match(/["'`](https?:\/\/[^"'`\s]{10,}\.m3u8[^"'`\s]*)/);
+              if (m) return m[1];
             }
             return null;
           });
-          if (found && found.startsWith("http")) {
-            console.log(`[js eval found] ${found.slice(0, 100)}`);
-            streamUrl = found;
-          }
+          if (found) { streamUrl = found; console.log(`[eval found] ${found.slice(0, 100)}`); }
         } catch {}
       }
     }
@@ -118,9 +115,9 @@ app.get("/extract", async (req, res) => {
     cache.set(url, { url: streamUrl, ts: Date.now() });
     return res.json({ url: streamUrl, cached: false });
 
-  } catch (err: any) {
+  } catch (err) {
     if (browser) await browser.close().catch(() => {});
-    console.error(`[error] ${url}:`, err.message);
+    console.error(`[error]`, err.message);
     return res.status(500).json({ error: err.message, embedUrl: url });
   }
 });
@@ -132,6 +129,4 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
-app.listen(PORT, () => {
-  console.log(`Latanime bridge v1.1 running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Bridge running on port ${PORT}`));
