@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: latanime-bridge
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: API_KEY
+        generateValue: true
+      - key: PORT
+        value: 3000
