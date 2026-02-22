@@ -1,26 +1,17 @@
 const express = require("express");
 const { chromium } = require("playwright-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
-const { createProxyMiddleware } = require("http-proxy-middleware");
 
 chromium.use(StealthPlugin());
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const MFP_PORT = process.env.MFP_PORT || 3001;
-
-// Forward all /proxy/* requests to MediaFlow Proxy running on MFP_PORT
-app.use("/proxy", createProxyMiddleware({
-  target: `http://127.0.0.1:${MFP_PORT}`,
-  changeOrigin: false,
-  pathRewrite: { "^/proxy": "/proxy" },
-}));
 
 const cache = new Map();
 const CACHE_TTL = 5 * 60 * 1000;
 
 app.get("/health", (req, res) => res.json({ status: "ok" }));
-app.get("/ping", (req, res) => res.send("OK"));
+app.get("/ping",   (req, res) => res.send("OK"));
 
 app.get("/extract", async (req, res) => {
   const { url } = req.query;
@@ -97,7 +88,6 @@ app.get("/extract", async (req, res) => {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
     } catch (e) { console.log(`[nav] ${e.message}`); }
 
-    // Click play button
     try {
       await page.waitForTimeout(2000);
       for (const sel of ['.jw-icon-display', '.play-button', '[class*="play"]', 'video']) {
@@ -106,7 +96,6 @@ app.get("/extract", async (req, res) => {
       }
     } catch {}
 
-    // Poll 20s
     const deadline = Date.now() + 20000;
     while (!streamUrl && Date.now() < deadline) {
       await page.waitForTimeout(500);
@@ -144,4 +133,4 @@ setInterval(() => {
   for (const [k, v] of cache.entries()) if (now - v.ts > CACHE_TTL) cache.delete(k);
 }, 5 * 60 * 1000);
 
-app.listen(PORT, () => console.log(`Bridge with stealth running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Bridge running on port ${PORT}`));
