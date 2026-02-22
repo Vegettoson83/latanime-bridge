@@ -14,24 +14,6 @@ app.get("/health", (req, res) => res.json({ status: "ok" }));
 app.get("/ping",   (req, res) => res.send("OK"));
 app.get("/",       (req, res) => res.json({ status: "ok", service: "latanime-bridge" }));
 
-// Forward /proxy/* to MediaFlow Proxy running internally on 8888
-const http = require("http");
-app.use("/proxy", (req, res) => {
-  const options = {
-    hostname: "127.0.0.1",
-    port: 8888,
-    path: req.url,
-    method: req.method,
-    headers: req.headers,
-  };
-  const proxy = http.request(options, (upstream) => {
-    res.writeHead(upstream.statusCode, upstream.headers);
-    upstream.pipe(res);
-  });
-  proxy.on("error", (e) => res.status(502).json({ error: e.message }));
-  req.pipe(proxy);
-});
-
 app.get("/extract", async (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: "Missing url param" });
