@@ -12,9 +12,10 @@ RUN python3 -m venv /opt/mfp && /opt/mfp/bin/pip install --no-cache-dir mediaflo
 ENV NODE_ENV=production
 ENV API_PASSWORD=latanime
 ENV FORWARDED_ALLOW_IPS=*
-ENV MFP_PORT=3001
-ENV PORT=3000
+# Render exposes PORT (3000) publicly — MFP runs there
+# Node bridge runs on 3001 internally
+ENV PORT=3001
 EXPOSE 3000
 
-# MediaFlow on 3001 (internal), Node bridge on 3000 (Render public port)
-CMD /opt/mfp/bin/uvicorn mediaflow_proxy.main:app --host 0.0.0.0 --port 3001 --forwarded-allow-ips "*" & node server.js & wait
+# MFP on 3000 (public), Node on 3001 (internal)
+CMD /opt/mfp/bin/uvicorn mediaflow_proxy.main:app --host 0.0.0.0 --port 3000 --forwarded-allow-ips "*" & node server.js & wait
