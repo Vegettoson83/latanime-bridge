@@ -9,3 +9,7 @@ services:
         generateValue: true
       - key: PORT
         value: 3000
+      - key: API_PASSWORD
+        value: latanime
+      - key: FORWARDED_ALLOW_IPS
+        value: "*"
