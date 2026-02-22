@@ -5,14 +5,16 @@ COPY package.json ./
 RUN npm install
 COPY . .
 
-# Install MediaFlow Proxy alongside the Node bridge
+# Install MediaFlow Proxy
 RUN apt-get update && apt-get install -y python3-pip python3-venv --no-install-recommends
 RUN python3 -m venv /opt/mfp && /opt/mfp/bin/pip install --no-cache-dir mediaflow-proxy
 
 ENV NODE_ENV=production
 ENV API_PASSWORD=latanime
 ENV FORWARDED_ALLOW_IPS=*
-EXPOSE 3000 8888
+ENV MFP_PORT=3001
+ENV PORT=3000
+EXPOSE 3000
 
-# Start both services
-CMD node server.js & /opt/mfp/bin/uvicorn mediaflow_proxy.main:app --host 0.0.0.0 --port 8888 --forwarded-allow-ips "*" & wait
+# MediaFlow on 3001 (internal), Node bridge on 3000 (Render public port)
+CMD /opt/mfp/bin/uvicorn mediaflow_proxy.main:app --host 0.0.0.0 --port 3001 --forwarded-allow-ips "*" & node server.js & wait

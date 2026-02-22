@@ -1,11 +1,20 @@
 const express = require("express");
 const { chromium } = require("playwright-extra");
 const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+const { createProxyMiddleware } = require("http-proxy-middleware");
 
 chromium.use(StealthPlugin());
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const MFP_PORT = process.env.MFP_PORT || 3001;
+
+// Forward all /proxy/* requests to MediaFlow Proxy running on MFP_PORT
+app.use("/proxy", createProxyMiddleware({
+  target: `http://127.0.0.1:${MFP_PORT}`,
+  changeOrigin: false,
+  pathRewrite: { "^/proxy": "/proxy" },
+}));
 
 const cache = new Map();
 const CACHE_TTL = 5 * 60 * 1000;
