@@ -10,6 +10,7 @@ const PORT = process.env.PORT || 3000;
 const cache = new Map();
 const CACHE_TTL = 5 * 60 * 1000;
 
+app.get("/", (req, res) => res.json({ status: "ok" }));
 app.get("/health", (req, res) => res.json({ status: "ok" }));
 app.get("/ping",   (req, res) => res.send("OK"));
 app.get("/",       (req, res) => res.json({ status: "ok", service: "latanime-bridge" }));
