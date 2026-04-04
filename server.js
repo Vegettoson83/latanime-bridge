@@ -15,6 +15,42 @@ app.get("/health", (req, res) => res.json({ status: "ok" }));
 app.get("/ping",   (req, res) => res.send("OK"));
 app.get("/",       (req, res) => res.json({ status: "ok", service: "latanime-bridge" }));
 
+// Simple HTML proxy — fetches a URL with browser-like headers and returns the HTML.
+// Used by the Cloudflare Worker to bypass latanime.org's IP block on CF datacenter IPs.
+app.get("/fetch", async (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).json({ error: "Missing url param" });
+
+  const cacheKey = `fetch:${url}`;
+  const cached = cache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) {
+    return res.send(cached.html);
+  }
+
+  try {
+    const r = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "es-MX,es;q=0.9,en-US;q=0.8",
+        "Referer": "https://www.google.com/",
+        "Cache-Control": "max-age=0",
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (!r.ok) return res.status(r.status).json({ error: `Upstream returned ${r.status}` });
+
+    const html = await r.text();
+    cache.set(cacheKey, { html, ts: Date.now() });
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.send(html);
+  } catch (err) {
+    console.error(`[fetch] ${err.message}`);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get("/extract", async (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: "Missing url param" });
